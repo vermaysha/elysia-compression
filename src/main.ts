@@ -1,5 +1,6 @@
 import { Elysia, mapResponse } from 'elysia'
 import type {
+  CacheOptions,
   CompressionEncoding,
   CompressionOptions,
   LifeCycleOptions,
@@ -13,22 +14,26 @@ import {
   deflateSync,
 } from 'node:zlib'
 import { CompressionStream } from './compression-stream'
+import cacheStore from './cache'
 
 /**
  * Creates a compression middleware function that compresses the response body based on the client's accept-encoding header.
  *
- * @param {CompressionOptions & LifeCycleOptions} [options] - Optional compression options and life cycle options.
+ * @param {CompressionOptions & LifeCycleOptions & CacheOptions} [options] - Optional compression, caching, and life cycle options.
  * @param {CompressionOptions} [options.compressionOptions] - Compression options.
  * @param {LifeCycleOptions} [options.lifeCycleOptions] - Life cycle options.
+ * @param {CacheOptions} [options.cacheOptions] - Cache options.
  * @param {CompressionEncoding[]} [options.compressionOptions.encodings] - An array of supported compression encodings. Defaults to ['br', 'gzip', 'deflate'].
  * @param {boolean} [options.compressionOptions.disableByHeader] - Disable compression by header. Defaults to false.
  * @param {BrotliOptions} [options.compressionOptions.brotliOptions] - Brotli compression options.
  * @param {ZlibOptions} [options.compressionOptions.zlibOptions] - Zlib compression options.
  * @param {LifeCycleType} [options.lifeCycleOptions.as] - The life cycle type. Defaults to 'scoped'.
+ * @param {number} [options.compressionOptions.threshold] - The minimum byte size for a response to be compressed. Defaults to 1024.
+ * @param {number} [options.cacheOptions.TTL] - The time-to-live for the cache. Defaults to 24 hours.
  * @returns {Elysia} - The Elysia app with compression middleware.
  */
 export const compression = (
-  options?: CompressionOptions & LifeCycleOptions,
+  options?: CompressionOptions & LifeCycleOptions & CacheOptions,
 ) => {
   const zlibOptions: ZlibOptions = {
     ...{
@@ -50,10 +55,30 @@ export const compression = (
     /^text\/(?!event-stream)|(?:\+|\/)json(?:;|$)|(?:\+|\/)text(?:;|$)|(?:\+|\/)xml(?:;|$)|octet-stream(?:;|$)/u
   const lifeCycleType = options?.as ?? 'global'
   const threshold = options?.threshold ?? 1024
+  const cacheTTL = options?.TTL ?? 24 * 60 * 60 // 24 hours
   const app = new Elysia({
     name: 'elysia-compress',
     seed: options,
   })
+
+  const compressors = {
+    br: (buffer: ArrayBuffer) => brotliCompressSync(buffer, brotliOptions),
+    gzip: (buffer: ArrayBuffer) => gzipSync(buffer, zlibOptions),
+    deflate: (buffer: ArrayBuffer) => deflateSync(buffer, zlibOptions),
+  } as Record<CompressionEncoding, (buffer: ArrayBuffer) => Buffer>
+
+  const textDecoder = new TextDecoder()
+  const getOrCompress = (algorithm: CompressionEncoding, buffer: ArrayBuffer): Buffer => {
+    const cacheKey = Bun.hash(`${algorithm}:${textDecoder.decode(buffer)}}`)
+    if (cacheStore.has(cacheKey)) {
+      return cacheStore.get(cacheKey)
+    }
+    else {
+      const compressedOutput = compressors[algorithm](buffer)
+      cacheStore.set(cacheKey, compressedOutput, cacheTTL)
+      return compressedOutput
+    }
+  }
 
   /**
    * Compresses the response body based on the client's accept-encoding header.
@@ -113,13 +138,10 @@ export const compression = (
         return
       }
 
-      if (encoding === 'br') {
-        compressed = brotliCompressSync(buffer, brotliOptions)
-      } else if (encoding === 'gzip') {
-        compressed = gzipSync(buffer, zlibOptions)
-      } else if (encoding === 'deflate') {
-        compressed = deflateSync(buffer, zlibOptions)
-      } else {
+      if (['br', 'gzip', 'deflate'].includes(encoding)) {
+        compressed = getOrCompress(encoding, buffer)  // Will try cache first
+      }
+      else {
         return
       }
     }

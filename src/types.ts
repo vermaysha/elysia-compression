@@ -65,3 +65,14 @@ export type LifeCycleOptions = {
    */
   as?: LifeCycleType
 }
+
+export type CacheOptions = {
+  /**
+   * The time-to-live in seconds.
+   *
+   * @default 86400 (24 hours)
+   */
+  TTL?: number
+}
+
+export type ElysiaCompressionOptions = CompressionOptions & LifeCycleOptions & CacheOptions

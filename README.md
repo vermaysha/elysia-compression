@@ -32,6 +32,8 @@ If an unsupported encoding is received or if the `'accept-encoding'` header is m
 
 The plugin automatically decides if a payload should be compressed based on its `content-type`; if no content type is present, it will assume `text/plain`. But if you send a response in the form of an Object then it will be detected automatically as `application/json`
 
+To improve performance, and given data compression is a resource-intensive operation, caching compressed responses can significantly reduce the load on your server. By setting an appropriate `TTL` (time to live, or how long you want your responses cached), you can ensure that frequently accessed data is served quickly without repeatedly compressing the same content. elysia-compress saves the data in-memory, so it's probably best if you set some sensible defaults (maybe even per-route or group) so as to not increase unnecessarily your memory usage
+
 ### Global Hook
 
 The global compression hook is enabled by default. To disable it, pass the option `{ as: 'scoped' }` or `{ as: 'scoped' }` You can read in-depth about [Elysia Scope on this page](https://elysiajs.com/essential/scope.html)
@@ -108,3 +110,17 @@ const app = new Elysia().use(
   }),
 )
 ```
+
+### Cache TTL
+
+You can specify a time-to-live (TTL) for the cache entries to define how long the compressed responses should be cached. The TTL is specified in seconds and defaults to `86400` (24 hours)
+
+```typescript
+const app = new Elysia().use(
+  compression({
+    TTL: 3600, // Cache TTL of 1 hour
+  }),
+)
+```
+
+This allows you to control how long the cached compressed responses are stored, helping to balance between performance and memory usage
